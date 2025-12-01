@@ -1,0 +1,4 @@
+discord.py
+requests
+Flask
+discord-ext-tasks
