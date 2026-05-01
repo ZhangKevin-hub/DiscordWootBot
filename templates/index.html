@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WootDeals Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+
+  <!-- Background Effects -->
+  <div class="bg-grid"></div>
+  <div class="bg-glow"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-mark">W</div>
+        <span class="logo-text">Woot<strong>Deals</strong></span>
+      </div>
+      <div class="header-right">
+        <div class="last-updated" id="lastUpdated">— loading —</div>
+        <button class="btn-refresh" id="btnRefresh" title="Force refresh all feeds">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          Refresh
+        </button>
+        <a href="/logout" class="btn-logout">Sign Out</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Stats Bar -->
+  <section class="stats-bar" id="statsBar">
+    <div class="stat-card" id="statTotal">
+      <div class="stat-value">—</div>
+      <div class="stat-label">Total Deals</div>
+    </div>
+    <div class="stat-card highlight-low" id="statNewLow">
+      <div class="stat-value">—</div>
+      <div class="stat-label">New All-Time Lows</div>
+    </div>
+    <div class="stat-card highlight-drop" id="statDrop">
+      <div class="stat-value">—</div>
+      <div class="stat-label">Price Drops</div>
+    </div>
+    <div class="stat-card" id="statGreat">
+      <div class="stat-value">—</div>
+      <div class="stat-label">Great Deals</div>
+    </div>
+  </section>
+
+  <!-- Controls -->
+  <section class="controls">
+    <div class="search-wrap">
+      <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="searchInput" placeholder="Search deals…" autocomplete="off">
+      <button class="clear-btn" id="clearSearch" aria-label="Clear search">✕</button>
+    </div>
+    <div class="filter-pills" id="filterPills">
+      <button class="pill active" data-category="All">All</button>
+      {% for name in feed_names if name != "All" %}
+      <button class="pill" data-category="{{ name }}">{{ name }}</button>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Deals Grid -->
+  <main class="deals-section">
+    <div class="deals-grid" id="dealsGrid">
+      <!-- Skeleton loaders -->
+      {% for i in range(6) %}
+      <div class="deal-card skeleton"></div>
+      {% endfor %}
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="emptyState" style="display:none">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-title">No deals found</div>
+      <div class="empty-sub">Try adjusting your filters or search, or hit Refresh to check for new deals.</div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination" id="pagination" style="display:none">
+      <button class="page-btn" id="pagePrev" disabled>← Prev</button>
+      <span class="page-info" id="pageInfo">Page 1 of 1</span>
+      <button class="page-btn" id="pageNext">Next →</button>
+    </div>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
