@@ -1,26 +1,15 @@
-"""
-routes.py — Flask route blueprints.
-
-main_bp  → HTML pages  (/, /login, /logout)
-api_bp   → JSON API    (/api/deals, /api/refresh, /api/stats)
-"""
-
 import time
 from flask import (
-    Blueprint, current_app, jsonify, render_template,
-    request, session, redirect, url_for
+    Blueprint, current_app, jsonify, render_template, request
 )
 from extensions import cache, limiter
-from woot_service import fetch_all_deals
+from woot_service import fetch_all_deals, load_deals_from_file, save_deals_to_file
 
 main_bp = Blueprint("main", __name__)
 api_bp = Blueprint("api", __name__)
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
-
 def _app_cfg() -> dict:
-    """Expose selected Flask config keys as a plain dict for the service layer."""
     cfg = current_app.config
     return {
         "WOOT_API_KEY": cfg["WOOT_API_KEY"],
@@ -33,40 +22,34 @@ def _app_cfg() -> dict:
     }
 
 
-def _get_cached_deals(force: bool = False) -> tuple[list, float]:
-    """Return (deals, fetched_at_timestamp). Uses Flask-Cache."""
-    cached = None if force else cache.get("all_deals")
-    if cached is not None:
-        return cached["deals"], cached["fetched_at"]
+def _get_deals(force: bool = False) -> tuple:
+    """
+    1. If force=True, fetch fresh from Woot, save to memory + file
+    2. Otherwise check memory cache first
+    3. Fall back to file cache (survives restarts)
+    4. Last resort: fetch live from Woot
+    """
+    if not force:
+        # Check memory cache first
+        cached = cache.get("all_deals")
+        if cached:
+            return cached["deals"], cached["fetched_at"]
 
+        deals, fetched_at = load_deals_from_file()
+        if deals:
+            # Reload into memory cache
+            cache.set("all_deals", {"deals": deals, "fetched_at": fetched_at})
+            return deals, fetched_at
+
+    # Data fetch
+    print("Fetching deals...")
     deals = fetch_all_deals(_app_cfg())
-    payload = {"deals": deals, "fetched_at": time.time()}
-    cache.set("all_deals", payload)
-    return deals, payload["fetched_at"]
+    fetched_at = time.time()
+    cache.set("all_deals", {"deals": deals, "fetched_at": fetched_at})
+    return deals, fetched_at
 
 
 # ── HTML Pages ────────────────────────────────────────────────────────────────
-
-@main_bp.route("/login", methods=["GET", "POST"])
-@limiter.limit("10 per minute")
-def login():
-    error = None
-    if request.method == "POST":
-        password = current_app.config.get("DASHBOARD_PASSWORD", "")
-        if request.form.get("password") == password:
-            session["authenticated"] = True
-            session.permanent = False
-            next_url = request.args.get("next") or url_for("main.index")
-            return redirect(next_url)
-        error = "Incorrect password."
-    return render_template("login.html", error=error)
-
-
-@main_bp.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("main.login"))
-
 
 @main_bp.route("/")
 def index():
@@ -79,26 +62,18 @@ def index():
 @api_bp.route("/deals")
 @limiter.limit("20 per minute")
 def get_deals():
-    """
-    GET /api/deals
-    Query params:
-      category  — filter by feed name (optional)
-      q         — search keyword (optional)
-      page      — 1-based page number (default 1)
-    """
     if not current_app.config.get("WOOT_API_KEY"):
-        return jsonify({"error": "WOOT_API_KEY is not configured on the server."}), 503
+        return jsonify({"error": "WOOT_API_KEY is not configured."}), 503
 
     try:
-        deals, fetched_at = _get_cached_deals()
+        deals, fetched_at = _get_deals()
     except Exception as e:
         current_app.logger.error(f"Deal fetch error: {e}")
-        return jsonify({"error": "Failed to fetch deals from Woot API."}), 502
+        return jsonify({"error": "Failed to fetch deals."}), 502
 
     # Filter
     category = request.args.get("category", "").strip()
     query = request.args.get("q", "").strip().lower()
-
     if category and category != "All":
         deals = [d for d in deals if d["feed_name"] == category]
     if query:
@@ -130,13 +105,17 @@ def get_deals():
 @api_bp.route("/refresh", methods=["POST"])
 @limiter.limit("5 per minute")
 def refresh():
-    """POST /api/refresh — Force a fresh fetch, bypassing cache."""
     if not current_app.config.get("WOOT_API_KEY"):
-        return jsonify({"error": "WOOT_API_KEY is not configured on the server."}), 503
+        return jsonify({"error": "WOOT_API_KEY is not configured."}), 503
+
+    token = request.headers.get("X-Refresh-Token", "")
+    expected = current_app.config.get("REFRESH_TOKEN", "")
+    if expected and token != expected:
+        return jsonify({"error": "Unauthorized"}), 401
 
     try:
         start = time.time()
-        deals, fetched_at = _get_cached_deals(force=True)
+        deals, fetched_at = _get_deals(force=True)
         elapsed = round(time.time() - start, 2)
         return jsonify({
             "ok": True,
@@ -152,12 +131,11 @@ def refresh():
 @api_bp.route("/stats")
 @limiter.limit("30 per minute")
 def stats():
-    """GET /api/stats — Summary counts and metadata."""
     if not current_app.config.get("WOOT_API_KEY"):
         return jsonify({"error": "WOOT_API_KEY is not configured."}), 503
 
     try:
-        deals, fetched_at = _get_cached_deals()
+        deals, fetched_at = _get_deals()
     except Exception as e:
         return jsonify({"error": str(e)}), 502
 

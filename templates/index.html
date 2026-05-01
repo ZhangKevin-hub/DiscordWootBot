@@ -5,12 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WootDeals Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 </head>
 <body>
-
-  <!-- Background Effects -->
   <div class="bg-grid"></div>
   <div class="bg-glow"></div>
 
@@ -32,7 +29,7 @@
     </div>
   </header>
 
-  <!-- Stats Bar -->
+  <!-- Stats -->
   <section class="stats-bar" id="statsBar">
     <div class="stat-card" id="statTotal">
       <div class="stat-value">—</div>
@@ -52,7 +49,7 @@
     </div>
   </section>
 
-  <!-- Controls -->
+  <!--Controls -->
   <section class="controls">
     <div class="search-wrap">
       <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -66,14 +63,11 @@
       {% endfor %}
     </div>
   </section>
-
-  <!-- Toast notification -->
   <div class="toast" id="toast"></div>
 
-  <!-- Deals Grid -->
+  <!-- Deals  -->
   <main class="deals-section">
     <div class="deals-grid" id="dealsGrid">
-      <!-- Skeleton loaders -->
       {% for i in range(6) %}
       <div class="deal-card skeleton"></div>
       {% endfor %}
@@ -86,7 +80,6 @@
       <div class="empty-sub">Try adjusting your filters or search, or hit Refresh to check for new deals.</div>
     </div>
 
-    <!-- Pagination -->
     <div class="pagination" id="pagination" style="display:none">
       <button class="page-btn" id="pagePrev" disabled>← Prev</button>
       <span class="page-info" id="pageInfo">Page 1 of 1</span>

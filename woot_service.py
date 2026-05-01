@@ -1,52 +1,54 @@
-"""
-woot_service.py — Woot API interaction, deal processing, and historical lows.
-All functions are synchronous (suitable for PythonAnywhere's WSGI environment).
-"""
-
 import json
 import os
 import random
 import time
 from typing import Any
-
+from concurrent.futures import ThreadPoolExecutor
 import requests
 
+CACHE_FILE = "deals_cache.json"
 
-# ── Historical Lows Persistence ───────────────────────────────────────────────
 
-def _lows_path(app_config) -> str:
-    return app_config.get("HISTORICAL_LOWS_FILE", "historical_lows.json")
+def save_deals_to_file(deals: list) -> None:
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump({"deals": deals, "fetched_at": time.time()}, f)
+        print(f"Saved {len(deals)} deals to file cache.")
+    except Exception as e:
+        print(f"ERROR saving deals to file: {e}")
 
+def load_deals_from_file() -> tuple:
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r") as f:
+                data = json.load(f)
+                return data.get("deals", []), data.get("fetched_at")
+    except Exception as e:
+        print(f"ERROR loading deals from file: {e}")
+    return [], None
+
+
+LOWS_FILE = "historical_lows.json"
 
 def load_historical_lows(app_config) -> dict:
-    path = _lows_path(app_config)
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
+    try:
+        if os.path.exists(LOWS_FILE):
+            with open(LOWS_FILE, "r") as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"WARNING: Could not load historical lows: {e}")
+    except Exception as e:
+        print(f"WARNING: Could not load historical lows: {e}")
     return {}
 
-
 def save_historical_low(app_config, offer_id: str, price: float, cache: dict) -> None:
-    """Update the in-memory cache dict and persist to disk."""
     cache[offer_id] = price
-    path = _lows_path(app_config)
     try:
-        with open(path, "w") as f:
+        with open(LOWS_FILE, "w") as f:
             json.dump(cache, f, indent=2)
     except Exception as e:
         print(f"ERROR saving historical lows: {e}")
 
 
-# ── Raw API Fetching ──────────────────────────────────────────────────────────
-
 def fetch_feed(feed_name: str, api_key: str, base_url: str) -> list[dict]:
-    """
-    Fetches one Woot feed with retry/back-off.
-    Returns a list of raw item dicts (may be empty on error).
-    """
     url = f"{base_url}/feed/{feed_name}"
     headers = {"Accept": "application/json", "x-api-key": api_key}
 
@@ -67,10 +69,7 @@ def fetch_feed(feed_name: str, api_key: str, base_url: str) -> list[dict]:
     return []
 
 
-# ── Deal Processing ───────────────────────────────────────────────────────────
-
 def process_raw_deal(raw: dict, feed_name: str) -> dict[str, Any]:
-    """Extract clean metrics from a raw Woot API item."""
     deal: dict[str, Any] = {
         "offer_id": raw.get("OfferId", "N/A"),
         "title": raw.get("Title", "No Title"),
@@ -84,7 +83,6 @@ def process_raw_deal(raw: dict, feed_name: str) -> dict[str, Any]:
         "image_url": None,
     }
 
-    # Extract image
     photos = raw.get("Photos", [])
     if photos and isinstance(photos, list):
         deal["image_url"] = photos[0].get("Url") or photos[0].get("url")
@@ -113,9 +111,7 @@ def process_raw_deal(raw: dict, feed_name: str) -> dict[str, Any]:
 
     return deal
 
-
 def passes_filters(deal: dict, config) -> bool:
-    """Returns True if the deal meets all configured thresholds."""
     if deal["sale_price"] is None or deal["is_sold_out"]:
         return False
     if deal["sale_price"] < config["MIN_SALE_PRICE"]:
@@ -126,14 +122,9 @@ def passes_filters(deal: dict, config) -> bool:
         return False
     return True
 
-
 # ── Full Refresh ──────────────────────────────────────────────────────────────
 
 def fetch_all_deals(app_config: dict) -> list[dict]:
-    """
-    Fetches every feed, filters deals, annotates with historical-low status.
-    Returns a list sorted by discount_percent descending.
-    """
     api_key = app_config.get("WOOT_API_KEY", "")
     base_url = app_config.get("WOOT_BASE_URL", "https://developer.woot.com")
     feed_names = app_config.get("FEED_NAMES", [])
@@ -146,10 +137,28 @@ def fetch_all_deals(app_config: dict) -> list[dict]:
 
     historical_lows = load_historical_lows(app_config)
     qualified: list[dict] = []
+    results = {}
+
+    batch_size = 3
+    batches = [feed_names[i:i+batch_size] for i in range(0, len(feed_names), batch_size)]
+
+    for batch in batches:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(fetch_feed, feed_name, api_key, base_url): feed_name
+                for feed_name in batch
+            }
+            for future in futures:
+                feed_name = futures[future]
+                try:
+                    results[feed_name] = future.result()
+                except Exception as e:
+                    print(f"Error fetching {feed_name}: {e}")
+                    results[feed_name] = []
+        time.sleep(0.5)
 
     for feed_name in feed_names:
-        raw_items = fetch_feed(feed_name, api_key, base_url)
-        for raw in raw_items:
+        for raw in results.get(feed_name, []):
             deal = process_raw_deal(raw, feed_name)
             if not passes_filters(deal, filter_cfg):
                 continue
@@ -159,9 +168,7 @@ def fetch_all_deals(app_config: dict) -> list[dict]:
 
             if deal["sale_price"] < current_low:
                 save_historical_low(app_config, offer_id, deal["sale_price"], historical_lows)
-                deal["status"] = (
-                    "NEW LOW" if current_low == float("inf") else f"PRICE DROP"
-                )
+                deal["status"] = "NEW LOW" if current_low == float("inf") else "PRICE DROP"
                 deal["prev_low"] = None if current_low == float("inf") else current_low
             else:
                 deal["status"] = "GREAT DEAL"
@@ -169,8 +176,6 @@ def fetch_all_deals(app_config: dict) -> list[dict]:
 
             qualified.append(deal)
 
-        # Polite delay between feed calls
-        time.sleep(random.uniform(1.1, 1.3))
-
     qualified.sort(key=lambda d: d["discount_percent"], reverse=True)
+    save_deals_to_file(qualified)
     return qualified
